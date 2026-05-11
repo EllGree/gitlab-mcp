@@ -35,7 +35,9 @@ async function gitlabFetch(path: string, method = "GET", body?: object) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`GitLab API error: ${res.status} ${await res.text()}`);
-  return res.json();
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) return res.json();
+  return res.text();
 }
 
 const server = new Server(
@@ -580,7 +582,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }],
     };
   } catch (err: any) {
     return {
