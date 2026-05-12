@@ -329,6 +329,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["project"],
       },
     },
+    {
+      name: "gitlab_get_pipeline",
+      description: "Get a single CI/CD pipeline by id. Returns its current status plus a `finished` boolean for terminal states (success, failed, canceled, skipped, manual). Use to check whether a pipeline is still running before merging an MR or proceeding with downstream work — replaces curl-loop polling.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project: { type: "string", description: "Project path" },
+          pipeline_id: { type: "number", description: "Pipeline ID" },
+        },
+        required: ["project", "pipeline_id"],
+      },
+    },
   ],
 }));
 
@@ -575,6 +587,26 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           updated_at: p.updated_at,
           web_url: p.web_url,
         }));
+        break;
+      }
+      case "gitlab_get_pipeline": {
+        const project = encodeURIComponent(args.project as string);
+        const p: any = await gitlabFetch(`/projects/${project}/pipelines/${args.pipeline_id}`);
+        const NON_TERMINAL = new Set(["running", "pending", "created", "waiting_for_resource", "preparing", "scheduled"]);
+        result = {
+          id: p.id,
+          status: p.status,
+          finished: !NON_TERMINAL.has(p.status),
+          ref: p.ref,
+          sha: p.sha?.substring(0, 8),
+          source: p.source,
+          created_at: p.created_at,
+          started_at: p.started_at,
+          finished_at: p.finished_at,
+          duration: p.duration,
+          queued_duration: p.queued_duration,
+          web_url: p.web_url,
+        };
         break;
       }
       default:
