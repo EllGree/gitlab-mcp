@@ -100,7 +100,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           description: { type: "string" },
           labels: { type: "string", description: "Comma-separated labels" },
           milestone_id: { type: "number" },
-          assignee_usernames: { type: "array", items: { type: "string" } },
+          assignee_ids: { type: "array", items: { type: "number" }, description: "GitLab user IDs to assign" },
         },
         required: ["project", "title"],
       },
@@ -118,7 +118,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           description: { type: "string" },
           labels: { type: "string" },
           milestone_id: { type: "number" },
-          assignee_usernames: { type: "array", items: { type: "string" } },
+          assignee_ids: { type: "array", items: { type: "number" }, description: "GitLab user IDs to assign" },
         },
         required: ["project", "issue_iid"],
       },
@@ -227,7 +227,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           target_branch: { type: "string", description: "Target branch name (default: main/dev)" },
           title: { type: "string", description: "MR title" },
           description: { type: "string", description: "MR description (markdown supported)" },
-          assignee_id: { type: "number", description: "Assignee user ID" },
+          assignee_id: { type: "number", description: "Assignee user ID (deprecated — prefer assignee_ids)" },
+          assignee_ids: { type: "array", items: { type: "number" }, description: "Assignee user IDs (GitLab canonical)" },
           reviewer_ids: { type: "array", items: { type: "number" }, description: "Reviewer user IDs" },
           squash: { type: "boolean", description: "Squash commits on merge (default: true)" },
           remove_source_branch: { type: "boolean", description: "Remove source branch after merge (default: true)" },
@@ -399,7 +400,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       case "gitlab_create_issue": {
         const project = encodeURIComponent(args.project as string);
-        result = await gitlabFetch(`/projects/${project}/issues`, "POST", args);
+        const { project: _p, ...body } = args as any;
+        result = await gitlabFetch(`/projects/${project}/issues`, "POST", body);
         break;
       }
       case "gitlab_update_issue": {
@@ -503,6 +505,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
         if (args.description) body.description = args.description;
         if (args.assignee_id) body.assignee_id = args.assignee_id;
+        if (args.assignee_ids) body.assignee_ids = args.assignee_ids;
         if (args.reviewer_ids) body.reviewer_ids = args.reviewer_ids;
         result = await gitlabFetch(`/projects/${project}/merge_requests`, "POST", body);
         break;
