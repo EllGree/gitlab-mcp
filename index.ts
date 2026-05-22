@@ -40,8 +40,30 @@ async function gitlabFetch(path: string, method = "GET", body?: object) {
   return res.text();
 }
 
+async function resolveUsernames(usernames: string[]): Promise<number[]> {
+  const ids = await Promise.all(usernames.map(async (username) => {
+    const users = await gitlabFetch(`/users?username=${encodeURIComponent(username)}`);
+    if (!Array.isArray(users) || users.length === 0) {
+      throw new Error(`User not found: ${username}`);
+    }
+    return users[0].id as number;
+  }));
+  return ids;
+}
+
+async function mergeAssigneeIds(
+  args: { assignee_ids?: number[]; assignee_usernames?: string[] }
+): Promise<number[] | undefined> {
+  const fromIds = args.assignee_ids ?? [];
+  const fromNames = args.assignee_usernames?.length
+    ? await resolveUsernames(args.assignee_usernames)
+    : [];
+  if (fromIds.length === 0 && fromNames.length === 0) return undefined;
+  return Array.from(new Set([...fromIds, ...fromNames]));
+}
+
 const server = new Server(
-  { name: "gitlab-mcp", version: "1.4.0" },
+  { name: "gitlab-mcp", version: "1.5.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -101,6 +123,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           labels: { type: "string", description: "Comma-separated labels" },
           milestone_id: { type: "number" },
           assignee_ids: { type: "array", items: { type: "number" }, description: "GitLab user IDs to assign" },
+          assignee_usernames: { type: "array", items: { type: "string" }, description: "GitLab usernames to assign (resolved server-side to user IDs)" },
         },
         required: ["project", "title"],
       },
@@ -119,6 +142,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           labels: { type: "string" },
           milestone_id: { type: "number" },
           assignee_ids: { type: "array", items: { type: "number" }, description: "GitLab user IDs to assign" },
+          assignee_usernames: { type: "array", items: { type: "string" }, description: "GitLab usernames to assign (resolved server-side to user IDs)" },
+        },
+        required: ["project", "issue_iid"],
+      },
+    },
+    {
+      name: "gitlab_set_assignees",
+      description: "Set the assignees on an issue (replaces existing). Takes either assignee_ids or assignee_usernames; usernames are resolved to IDs server-side.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project: { type: "string", description: "Project path" },
+          issue_iid: { type: "number", description: "Issue number (IID)" },
+          assignee_ids: { type: "array", items: { type: "number" }, description: "GitLab user IDs (pass empty array to unassign all)" },
+          assignee_usernames: { type: "array", items: { type: "string" }, description: "GitLab usernames (resolved to IDs server-side)" },
         },
         required: ["project", "issue_iid"],
       },
@@ -229,7 +267,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           description: { type: "string", description: "MR description (markdown supported)" },
           assignee_id: { type: "number", description: "Assignee user ID (deprecated — prefer assignee_ids)" },
           assignee_ids: { type: "array", items: { type: "number" }, description: "Assignee user IDs (GitLab canonical)" },
+          assignee_usernames: { type: "array", items: { type: "string" }, description: "Assignee usernames (resolved server-side to user IDs)" },
           reviewer_ids: { type: "array", items: { type: "number" }, description: "Reviewer user IDs" },
+          reviewer_usernames: { type: "array", items: { type: "string" }, description: "Reviewer usernames (resolved server-side to user IDs)" },
           squash: { type: "boolean", description: "Squash commits on merge (default: true)" },
           remove_source_branch: { type: "boolean", description: "Remove source branch after merge (default: true)" },
         },
@@ -400,15 +440,47 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       case "gitlab_create_issue": {
         const project = encodeURIComponent(args.project as string);
-        const { project: _p, ...body } = args as any;
-        result = await gitlabFetch(`/projects/${project}/issues`, "POST", body);
+        const { project: _p, assignee_usernames, ...body } = args as any;
+        const mergedIds = await mergeAssigneeIds({ assignee_ids: body.assignee_ids, assignee_usernames });
+        if (mergedIds) body.assignee_ids = mergedIds;
+        const issue: any = await gitlabFetch(`/projects/${project}/issues`, "POST", body);
+        if (assignee_usernames?.length && (!issue.assignees || issue.assignees.length === 0)) {
+          issue._warning = `assignee_usernames was supplied (${assignee_usernames.join(", ")}) but the created issue has no assignees — check token permissions or that the users have access to the project`;
+        }
+        result = issue;
         break;
       }
       case "gitlab_update_issue": {
         const project = encodeURIComponent(args.project as string);
         const iid = args.issue_iid;
-        const { project: _p, issue_iid: _i, ...body } = args as any;
+        const { project: _p, issue_iid: _i, assignee_usernames, ...body } = args as any;
+        const mergedIds = await mergeAssigneeIds({ assignee_ids: body.assignee_ids, assignee_usernames });
+        if (mergedIds) body.assignee_ids = mergedIds;
         result = await gitlabFetch(`/projects/${project}/issues/${iid}`, "PUT", body);
+        break;
+      }
+      case "gitlab_set_assignees": {
+        const project = encodeURIComponent(args.project as string);
+        const iid = args.issue_iid;
+        const explicitIds = args.assignee_ids as number[] | undefined;
+        const usernames = args.assignee_usernames as string[] | undefined;
+        let ids: number[];
+        if (Array.isArray(explicitIds)) {
+          ids = explicitIds;
+          if (usernames?.length) {
+            const resolved = await resolveUsernames(usernames);
+            ids = Array.from(new Set([...ids, ...resolved]));
+          }
+        } else if (usernames !== undefined) {
+          ids = usernames.length ? await resolveUsernames(usernames) : [];
+        } else {
+          throw new Error("gitlab_set_assignees requires either assignee_ids or assignee_usernames");
+        }
+        const issue: any = await gitlabFetch(`/projects/${project}/issues/${iid}`, "PUT", { assignee_ids: ids });
+        if (ids.length > 0 && (!issue.assignees || issue.assignees.length === 0)) {
+          issue._warning = `assignees were requested (${ids.join(", ")}) but the issue has none after the update — check token permissions or project access`;
+        }
+        result = issue;
         break;
       }
       case "gitlab_add_comment": {
@@ -505,9 +577,22 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
         if (args.description) body.description = args.description;
         if (args.assignee_id) body.assignee_id = args.assignee_id;
-        if (args.assignee_ids) body.assignee_ids = args.assignee_ids;
-        if (args.reviewer_ids) body.reviewer_ids = args.reviewer_ids;
-        result = await gitlabFetch(`/projects/${project}/merge_requests`, "POST", body);
+        const mergedAssignees = await mergeAssigneeIds({
+          assignee_ids: args.assignee_ids as number[] | undefined,
+          assignee_usernames: args.assignee_usernames as string[] | undefined,
+        });
+        if (mergedAssignees) body.assignee_ids = mergedAssignees;
+        const reviewerUsernames = args.reviewer_usernames as string[] | undefined;
+        const explicitReviewerIds = (args.reviewer_ids as number[] | undefined) ?? [];
+        const resolvedReviewerIds = reviewerUsernames?.length ? await resolveUsernames(reviewerUsernames) : [];
+        if (explicitReviewerIds.length || resolvedReviewerIds.length) {
+          body.reviewer_ids = Array.from(new Set([...explicitReviewerIds, ...resolvedReviewerIds]));
+        }
+        const mr: any = await gitlabFetch(`/projects/${project}/merge_requests`, "POST", body);
+        if (args.assignee_usernames && (!mr.assignees || mr.assignees.length === 0)) {
+          mr._warning = `assignee_usernames was supplied (${(args.assignee_usernames as string[]).join(", ")}) but the MR has no assignees — check token permissions or project access`;
+        }
+        result = mr;
         break;
       }
       case "gitlab_create_mr_discussion": {
