@@ -99,6 +99,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "gitlab_list_assigned_issues",
+      description: "List issues assigned to a user across all groups and projects. Cross-cuts groups (unlike gitlab_list_group_issues). Provide either assignee_id or assignee_username.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          assignee_id: { type: "number", description: "GitLab user ID" },
+          assignee_username: { type: "string", description: "GitLab username (used if assignee_id is not provided)" },
+          state: { type: "string", enum: ["opened", "closed", "all"], default: "opened" },
+          labels: { type: "string", description: "Comma-separated labels" },
+          milestone: { type: "string", description: "Milestone title" },
+          search: { type: "string" },
+          project: { type: "string", description: "Optional project path to scope results to one project" },
+        },
+        required: [],
+      },
+    },
+    {
       name: "gitlab_list_milestone_issues",
       description: "List issues in a GitLab milestone",
       inputSchema: {
@@ -414,6 +431,40 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           milestone: i.milestone?.title,
           web_url: i.web_url,
           created_at: i.created_at,
+        }));
+        break;
+      }
+      case "gitlab_list_assigned_issues": {
+        const params = new URLSearchParams({
+          state: (args.state as string) || "opened",
+          scope: "all",
+          per_page: "100",
+        });
+        if (args.assignee_id != null) {
+          params.set("assignee_id", String(args.assignee_id));
+        } else if (args.assignee_username) {
+          params.set("assignee_username", args.assignee_username as string);
+        } else {
+          throw new Error("gitlab_list_assigned_issues requires either assignee_id or assignee_username");
+        }
+        if (args.labels) params.set("labels", args.labels as string);
+        if (args.milestone) params.set("milestone", args.milestone as string);
+        if (args.search) params.set("search", args.search as string);
+        const raw = await gitlabFetch(`/issues?${params}`);
+        const projectFilter = args.project as string | undefined;
+        const filtered = projectFilter
+          ? raw.filter((i: any) => i.web_url?.includes(`/${projectFilter}/`))
+          : raw;
+        result = filtered.map((i: any) => ({
+          id: i.id, iid: i.iid, project_id: i.project_id,
+          title: i.title, state: i.state,
+          labels: i.labels,
+          assignees: i.assignees?.map((a: any) => a.username),
+          milestone: i.milestone?.title,
+          web_url: i.web_url,
+          created_at: i.created_at,
+          updated_at: i.updated_at,
+          references: i.references,
         }));
         break;
       }
