@@ -235,14 +235,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "gitlab_list_mr_notes",
-      description: "List comments/notes on a merge request",
+      description: "List comments/notes on a merge request. By default excludes system-generated notes (e.g. 'mentioned in commit X', label changes); pass include_system_notes:true to include them.",
       inputSchema: {
         type: "object",
         properties: {
           project: { type: "string", description: "Project path" },
           mr_iid: { type: "number", description: "Merge request number (IID)" },
+          include_system_notes: { type: "boolean", description: "Include system-generated notes in results (default: false)", default: false },
         },
         required: ["project", "mr_iid"],
+      },
+    },
+    {
+      name: "gitlab_list_issue_notes",
+      description: "List comments/notes on an issue. By default excludes system-generated notes (e.g. 'mentioned in commit X', label changes); pass include_system_notes:true to include them.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project: { type: "string", description: "Project path" },
+          issue_iid: { type: "number", description: "Issue number (IID)" },
+          include_system_notes: { type: "boolean", description: "Include system-generated notes in results (default: false)", default: false },
+        },
+        required: ["project", "issue_iid"],
       },
     },
     {
@@ -597,7 +611,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "gitlab_list_mr_notes": {
         const project = encodeURIComponent(args.project as string);
         const raw = await gitlabFetch(`/projects/${project}/merge_requests/${args.mr_iid}/notes?per_page=100`);
-        result = raw.map((n: any) => ({
+        const filtered = args.include_system_notes ? raw : raw.filter((n: any) => !n.system);
+        result = filtered.map((n: any) => ({
           id: n.id,
           body: n.body,
           author: n.author?.username,
@@ -605,6 +620,19 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           system: n.system,
           resolvable: n.resolvable,
           resolved: n.resolved,
+        }));
+        break;
+      }
+      case "gitlab_list_issue_notes": {
+        const project = encodeURIComponent(args.project as string);
+        const raw = await gitlabFetch(`/projects/${project}/issues/${args.issue_iid}/notes?per_page=100`);
+        const filtered = args.include_system_notes ? raw : raw.filter((n: any) => !n.system);
+        result = filtered.map((n: any) => ({
+          id: n.id,
+          body: n.body,
+          author: n.author?.username,
+          created_at: n.created_at,
+          system: n.system,
         }));
         break;
       }
