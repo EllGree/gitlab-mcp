@@ -88,7 +88,7 @@ async function mergeAssigneeIds(
 }
 
 const server = new Server(
-  { name: "gitlab-mcp", version: "1.5.0" },
+  { name: "gitlab-mcp", version: "1.6.0" },
   { capabilities: { tools: {} } }
 );
 

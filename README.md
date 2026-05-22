@@ -70,9 +70,12 @@ Restart Claude Code or run `/mcp` to connect.
 |------|-------------|
 | `gitlab_get_issue` | Get a single issue by project and IID |
 | `gitlab_list_group_issues` | List issues in a group with filters (state, labels, assignee, search, milestone) |
+| `gitlab_list_assigned_issues` | List issues assigned to a user across all groups (cross-cuts groups) |
 | `gitlab_list_milestone_issues` | List issues in a milestone |
-| `gitlab_create_issue` | Create a new issue |
+| `gitlab_list_issue_notes` | List comments on an issue (excludes system notes by default) |
+| `gitlab_create_issue` | Create a new issue (accepts `assignee_usernames`; resolved server-side) |
 | `gitlab_update_issue` | Update issue (state, title, description, labels, assignee, milestone) |
+| `gitlab_set_assignees` | Set/replace assignees on an issue (accepts ids or usernames; empty array unassigns) |
 | `gitlab_add_comment` | Add a comment to an issue |
 
 ### Merge Requests
@@ -82,7 +85,7 @@ Restart Claude Code or run `/mcp` to connect.
 | `gitlab_list_merge_requests` | List MRs with filters (state, author, reviewer, assignee, date, target branch). Project is optional — omit for cross-project search. |
 | `gitlab_get_merge_request` | Get a single MR by project and IID |
 | `gitlab_get_mr_changes` | Get the diff / changed files of an MR |
-| `gitlab_list_mr_notes` | List comments/notes on an MR |
+| `gitlab_list_mr_notes` | List comments/notes on an MR (excludes system notes by default; pass `include_system_notes:true` to include) |
 | `gitlab_add_mr_note` | Add a general comment to an MR |
 | `gitlab_create_mr_discussion` | Create an inline diff comment on a specific file and line |
 
@@ -106,7 +109,7 @@ Restart Claude Code or run `/mcp` to connect.
 
 | Tool | Description |
 |------|-------------|
-| `gitlab_api_request` | Call any GitLab REST API endpoint directly. Use when no dedicated tool exists. Takes `method` (GET/POST/PUT/PATCH/DELETE), `path` (e.g. `/projects/93/merge_requests/2387/notes/74875`), and optional `body`. |
+| `gitlab_api_request` | Call any GitLab REST API endpoint directly. Use when no dedicated tool exists. Takes `method` (GET/POST/PUT/PATCH/DELETE), `path` (e.g. `/projects/93/merge_requests/2387/notes/74875`), and optional `body`, `fields` (top-level projection), `slim` (drop noisy fields like `_links`). |
 
 Example — edit an existing MR note:
 
