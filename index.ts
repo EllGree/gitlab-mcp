@@ -51,6 +51,31 @@ async function resolveUsernames(usernames: string[]): Promise<number[]> {
   return ids;
 }
 
+const SLIM_DENYLIST = ["_links", "task_completion_status", "closed_by"];
+
+function projectObject(obj: any, fields?: string[], slim?: boolean): any {
+  if (obj === null || typeof obj !== "object") return obj;
+  if (fields && fields.length > 0) {
+    const out: Record<string, unknown> = {};
+    for (const f of fields) {
+      if (f in obj) out[f] = obj[f];
+    }
+    return out;
+  }
+  if (slim) {
+    const out: Record<string, unknown> = { ...obj };
+    for (const k of SLIM_DENYLIST) delete out[k];
+    return out;
+  }
+  return obj;
+}
+
+function projectResponse(data: any, fields?: string[], slim?: boolean): any {
+  if (!fields?.length && !slim) return data;
+  if (Array.isArray(data)) return data.map((item) => projectObject(item, fields, slim));
+  return projectObject(data, fields, slim);
+}
+
 async function mergeAssigneeIds(
   args: { assignee_ids?: number[]; assignee_usernames?: string[] }
 ): Promise<number[] | undefined> {
@@ -274,13 +299,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "gitlab_api_request",
-      description: "Generic escape hatch — call any GitLab REST API endpoint directly. Use this when no dedicated tool exists for the operation you need (e.g. editing notes, approving MRs, managing branches, etc.). The path is appended to the configured base URL.",
+      description: "Generic escape hatch — call any GitLab REST API endpoint directly. Use this when no dedicated tool exists for the operation you need (e.g. editing notes, approving MRs, managing branches, etc.). The path is appended to the configured base URL. To keep listing responses compact, use `fields` for explicit projection or `slim:true` to drop a denylist of noisy fields (_links, task_completion_status, closed_by) — useful when the raw response exceeds the inline budget.",
       inputSchema: {
         type: "object",
         properties: {
           method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"], description: "HTTP method" },
           path: { type: "string", description: "API path starting with /, e.g. /projects/93/merge_requests/2387/notes/74875" },
           body: { type: "object", description: "Optional JSON body for POST/PUT/PATCH requests", additionalProperties: true },
+          fields: { type: "array", items: { type: "string" }, description: "Optional projection — keep only these top-level fields in the response. For array responses, applied to each element. Wins over slim if both provided." },
+          slim: { type: "boolean", description: "Strip a denylist of noisy fields (_links, task_completion_status, closed_by) from the response. For array responses, applied to each element. Default false.", default: false },
         },
         required: ["method", "path"],
       },
@@ -642,7 +669,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         break;
       }
       case "gitlab_api_request": {
-        result = await gitlabFetch(args.path as string, args.method as string, args.body as object | undefined);
+        const raw = await gitlabFetch(args.path as string, args.method as string, args.body as object | undefined);
+        result = projectResponse(raw, args.fields as string[] | undefined, args.slim as boolean | undefined);
         break;
       }
       case "gitlab_create_merge_request": {
