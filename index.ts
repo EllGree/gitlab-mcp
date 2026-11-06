@@ -40,6 +40,13 @@ async function gitlabFetch(path: string, method = "GET", body?: object) {
   return res.text();
 }
 
+// The token owner: the person every MR created through this server belongs to.
+let tokenUserId: number | undefined;
+async function getTokenUserId(): Promise<number> {
+  if (tokenUserId === undefined) tokenUserId = (await gitlabFetch("/user")).id as number;
+  return tokenUserId;
+}
+
 async function resolveUsernames(usernames: string[]): Promise<number[]> {
   const ids = await Promise.all(usernames.map(async (username) => {
     const users = await gitlabFetch(`/users?username=${encodeURIComponent(username)}`);
@@ -324,7 +331,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           title: { type: "string", description: "MR title" },
           description: { type: "string", description: "MR description (markdown supported)" },
           assignee_id: { type: "number", description: "Assignee user ID (deprecated — prefer assignee_ids)" },
-          assignee_ids: { type: "array", items: { type: "number" }, description: "Assignee user IDs (GitLab canonical)" },
+          assignee_ids: { type: "array", items: { type: "number" }, description: "Assignee user IDs (GitLab canonical). Omit all assignee fields to assign the token owner." },
           assignee_usernames: { type: "array", items: { type: "string" }, description: "Assignee usernames (resolved server-side to user IDs)" },
           reviewer_ids: { type: "array", items: { type: "number" }, description: "Reviewer user IDs" },
           reviewer_usernames: { type: "array", items: { type: "string" }, description: "Reviewer usernames (resolved server-side to user IDs)" },
@@ -689,6 +696,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           assignee_usernames: args.assignee_usernames as string[] | undefined,
         });
         if (mergedAssignees) body.assignee_ids = mergedAssignees;
+        // A reviewer won't pick up an MR nobody owns, so no assignee means the token owner.
+        if (!body.assignee_id && !body.assignee_ids) body.assignee_ids = [await getTokenUserId()];
         const reviewerUsernames = args.reviewer_usernames as string[] | undefined;
         const explicitReviewerIds = (args.reviewer_ids as number[] | undefined) ?? [];
         const resolvedReviewerIds = reviewerUsernames?.length ? await resolveUsernames(reviewerUsernames) : [];
